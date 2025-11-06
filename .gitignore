@@ -47,8 +47,10 @@ yarn-error.log*
 next-env.d.ts
 .tsbuild/
 
-
 # /**/migrations/*
+# orm artifacts
+.snapshot-postgres.json
+
 # Generated module files
 /src/generated/
 /generated/
@@ -70,4 +72,7 @@ packages/*/src/**/*.jsx
 ./.data
 data/*
 
+
+
 tmp/
+
