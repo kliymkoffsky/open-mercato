@@ -115,6 +115,12 @@ export const bookingEventSchema = z
 
 export type BookingEventInput = z.infer<typeof bookingEventSchema>;
 
+export const eventCreateSchema = bookingEventSchema.omit({ id: true });
+export const eventUpdateSchema = eventCreateSchema.partial().extend({ id: uuid });
+
+export type BookingEventCreateInput = z.infer<typeof eventCreateSchema>;
+export type BookingEventUpdateInput = z.infer<typeof eventUpdateSchema>;
+
 export const attendeeSchema = z
   .object({
     id: uuid.optional(),
@@ -140,6 +146,12 @@ export const attendeeSchema = z
 
 export type BookingEventAttendeeInput = z.infer<typeof attendeeSchema>;
 
+export const attendeeCreateSchema = attendeeSchema.omit({ id: true });
+export const attendeeUpdateSchema = attendeeCreateSchema.partial().extend({ id: uuid });
+
+export type BookingEventAttendeeCreateInput = z.infer<typeof attendeeCreateSchema>;
+export type BookingEventAttendeeUpdateInput = z.infer<typeof attendeeUpdateSchema>;
+
 export const teamRoleSchema = z
   .object({
     id: uuid.optional(),
@@ -150,7 +162,12 @@ export const teamRoleSchema = z
   })
   .strict();
 
+export const teamRoleCreateSchema = teamRoleSchema.omit({ id: true });
+export const teamRoleUpdateSchema = teamRoleCreateSchema.partial().extend({ id: uuid });
+
 export type BookingTeamRoleInput = z.infer<typeof teamRoleSchema>;
+export type BookingTeamRoleCreateInput = z.infer<typeof teamRoleCreateSchema>;
+export type BookingTeamRoleUpdateInput = z.infer<typeof teamRoleUpdateSchema>;
 
 export const teamMemberSchema = z
   .object({
@@ -165,7 +182,12 @@ export const teamMemberSchema = z
   })
   .strict();
 
+export const teamMemberCreateSchema = teamMemberSchema.omit({ id: true });
+export const teamMemberUpdateSchema = teamMemberCreateSchema.partial().extend({ id: uuid });
+
 export type BookingTeamMemberInput = z.infer<typeof teamMemberSchema>;
+export type BookingTeamMemberCreateInput = z.infer<typeof teamMemberCreateSchema>;
+export type BookingTeamMemberUpdateInput = z.infer<typeof teamMemberUpdateSchema>;
 
 export const resourceTypeSchema = z
   .object({
@@ -177,7 +199,12 @@ export const resourceTypeSchema = z
   })
   .strict();
 
+export const resourceTypeCreateSchema = resourceTypeSchema.omit({ id: true });
+export const resourceTypeUpdateSchema = resourceTypeCreateSchema.partial().extend({ id: uuid });
+
 export type BookingResourceTypeInput = z.infer<typeof resourceTypeSchema>;
+export type BookingResourceTypeCreateInput = z.infer<typeof resourceTypeCreateSchema>;
+export type BookingResourceTypeUpdateInput = z.infer<typeof resourceTypeUpdateSchema>;
 
 export const resourceSchema = z
   .object({
@@ -192,7 +219,12 @@ export const resourceSchema = z
   })
   .strict();
 
+export const resourceCreateSchema = resourceSchema.omit({ id: true });
+export const resourceUpdateSchema = resourceCreateSchema.partial().extend({ id: uuid });
+
 export type BookingResourceInput = z.infer<typeof resourceSchema>;
+export type BookingResourceCreateInput = z.infer<typeof resourceCreateSchema>;
+export type BookingResourceUpdateInput = z.infer<typeof resourceUpdateSchema>;
 
 export const availabilityRuleSchema = z
   .object({
@@ -207,7 +239,12 @@ export const availabilityRuleSchema = z
   })
   .strict();
 
+export const availabilityRuleCreateSchema = availabilityRuleSchema.omit({ id: true });
+export const availabilityRuleUpdateSchema = availabilityRuleCreateSchema.partial().extend({ id: uuid });
+
 export type BookingAvailabilityRuleInput = z.infer<typeof availabilityRuleSchema>;
+export type BookingAvailabilityRuleCreateInput = z.infer<typeof availabilityRuleCreateSchema>;
+export type BookingAvailabilityRuleUpdateInput = z.infer<typeof availabilityRuleUpdateSchema>;
 
 /**
  * TODO schemas (next iteration):

@@ -3,17 +3,17 @@ import { z } from 'zod'
 import type { CommandBus } from '@open-mercato/shared/lib/commands'
 import { CrudHttpError } from '@open-mercato/shared/lib/crud/errors'
 import { serializeOperationMetadata } from '@open-mercato/shared/lib/commands/operationMetadata'
-import { BookingService } from '../data/entities'
+import { BookingAvailabilityRule } from '../data/entities'
 import {
-  serviceCreateSchema,
-  serviceUpdateSchema,
-  type ServiceCreateInput,
-  type ServiceUpdateInput,
+  availabilityRuleCreateSchema,
+  availabilityRuleUpdateSchema,
+  type BookingAvailabilityRuleCreateInput,
+  type BookingAvailabilityRuleUpdateInput,
 } from '../data/validators'
 import {
-  mapServiceCreateInputForCommand,
-  mapServiceUpdateInput,
-} from '../commands/services'
+  mapAvailabilityCreateInput,
+  mapAvailabilityUpdateInput,
+} from '../commands/availability'
 import {
   bookingScopedHelpers,
   ensureOrganizationAccess,
@@ -25,10 +25,10 @@ const { withScopedPayload } = bookingScopedHelpers
 const deleteSchema = z.object({ id: z.string().uuid() })
 
 const routeMetadata = {
-  GET: { requireAuth: true, requireFeatures: ['booking.services.manage'] },
-  POST: { requireAuth: true, requireFeatures: ['booking.services.manage'] },
-  PATCH: { requireAuth: true, requireFeatures: ['booking.services.manage'] },
-  DELETE: { requireAuth: true, requireFeatures: ['booking.services.manage'] },
+  GET: { requireAuth: true, requireFeatures: ['booking.members.manage'] },
+  POST: { requireAuth: true, requireFeatures: ['booking.members.manage'] },
+  PATCH: { requireAuth: true, requireFeatures: ['booking.members.manage'] },
+  DELETE: { requireAuth: true, requireFeatures: ['booking.members.manage'] },
 }
 
 export const metadata = routeMetadata
@@ -38,6 +38,9 @@ export async function GET(req: Request) {
     const context = await resolveBookingRouteContext(req)
     const url = new URL(req.url)
     const organizationParam = url.searchParams.get('organizationId')
+    const subjectType = url.searchParams.get('subjectType')
+    const subjectId = url.searchParams.get('subjectId')
+
     const scoped = withScopedPayload(
       {
         tenantId: context.tenantId,
@@ -58,25 +61,24 @@ export async function GET(req: Request) {
     } else if (context.organizationIds && context.organizationIds.length > 0) {
       filter.organizationId = { $in: context.organizationIds }
     }
+    if (subjectType) filter.subjectType = subjectType
+    if (subjectId) filter.subjectId = subjectId
 
-    const services = await context.em.find(BookingService, filter, { orderBy: { name: 'asc' } })
-    const payload = services.map((service) => ({
-      id: service.id,
-      tenantId: service.tenantId,
-      organizationId: service.organizationId,
-      name: service.name,
-      description: service.description ?? null,
-      durationMinutes: service.durationMinutes,
-      capacityModel: service.capacityModel,
-      maxAttendees: service.maxAttendees ?? null,
-      requiredRoles: service.requiredRoles,
-      requiredMembers: service.requiredMembers,
-      requiredResources: service.requiredResources,
-      requiredResourceTypes: service.requiredResourceTypes,
-      tags: service.tags,
-      isActive: service.isActive,
-      createdAt: service.createdAt,
-      updatedAt: service.updatedAt,
+    const rules = await context.em.find(BookingAvailabilityRule, filter, {
+      orderBy: { createdAt: 'desc' },
+    })
+
+    const payload = rules.map((rule) => ({
+      id: rule.id,
+      tenantId: rule.tenantId,
+      organizationId: rule.organizationId,
+      subjectType: rule.subjectType,
+      subjectId: rule.subjectId,
+      timezone: rule.timezone,
+      rrule: rule.rrule,
+      exdates: rule.exdates,
+      createdAt: rule.createdAt,
+      updatedAt: rule.updatedAt,
     }))
 
     return NextResponse.json({ items: payload })
@@ -84,8 +86,8 @@ export async function GET(req: Request) {
     if (error instanceof CrudHttpError) {
       return NextResponse.json(error.body, { status: error.status })
     }
-    console.error('[booking.services.GET] Unexpected error', error)
-    return NextResponse.json({ error: 'Failed to load booking services' }, { status: 500 })
+    console.error('[booking.availability.GET] Unexpected error', error)
+    return NextResponse.json({ error: 'Failed to load booking availability rules' }, { status: 500 })
   }
 }
 
@@ -94,29 +96,28 @@ export async function POST(req: Request) {
     const context = await resolveBookingRouteContext(req)
     const raw = await req.json().catch(() => ({}))
     const parsed = bookingScopedHelpers.parseScopedCommandInput(
-      serviceCreateSchema,
+      availabilityRuleCreateSchema,
       raw,
       context.ctx,
       context.translate,
-    ) as ServiceCreateInput
+    ) as BookingAvailabilityRuleCreateInput
 
     ensureOrganizationAccess(parsed.organization_id ?? null, context.organizationIds)
 
     const commandBus = context.container.resolve('commandBus') as CommandBus
-    const commandInput = mapServiceCreateInputForCommand(parsed)
-    const { result, logEntry } = await commandBus.execute('booking.services.create', {
-      input: commandInput,
+    const { result, logEntry } = await commandBus.execute('booking.availability.create', {
+      input: mapAvailabilityCreateInput(parsed),
       ctx: context.ctx,
     })
 
-    const serviceId = (result as { serviceId?: string | null } | null)?.serviceId
-    if (!serviceId) {
-      throw new CrudHttpError(500, { error: 'Failed to create booking service' })
+    const availabilityId = (result as { availabilityId?: string | null } | null)?.availabilityId
+    if (!availabilityId) {
+      throw new CrudHttpError(500, { error: 'Failed to create booking availability rule' })
     }
 
-    const record = await context.em.findOne(BookingService, { id: serviceId })
+    const record = await context.em.findOne(BookingAvailabilityRule, { id: availabilityId })
     if (!record) {
-      throw new CrudHttpError(500, { error: 'Failed to load created booking service' })
+      throw new CrudHttpError(500, { error: 'Failed to load created booking availability rule' })
     }
 
     const response = NextResponse.json(
@@ -124,17 +125,11 @@ export async function POST(req: Request) {
         id: record.id,
         tenantId: record.tenantId,
         organizationId: record.organizationId,
-        name: record.name,
-        description: record.description ?? null,
-        durationMinutes: record.durationMinutes,
-        capacityModel: record.capacityModel,
-        maxAttendees: record.maxAttendees ?? null,
-        requiredRoles: record.requiredRoles,
-        requiredMembers: record.requiredMembers,
-        requiredResources: record.requiredResources,
-        requiredResourceTypes: record.requiredResourceTypes,
-        tags: record.tags,
-        isActive: record.isActive,
+        subjectType: record.subjectType,
+        subjectId: record.subjectId,
+        timezone: record.timezone,
+        rrule: record.rrule,
+        exdates: record.exdates,
         createdAt: record.createdAt,
         updatedAt: record.updatedAt,
       },
@@ -149,7 +144,7 @@ export async function POST(req: Request) {
           undoToken: logEntry.undoToken,
           commandId: logEntry.commandId,
           actionLabel: logEntry.actionLabel ?? null,
-          resourceKind: 'booking.service',
+          resourceKind: 'booking.availability',
           resourceId: record.id,
           executedAt: logEntry.createdAt instanceof Date ? logEntry.createdAt.toISOString() : undefined,
         }),
@@ -161,8 +156,8 @@ export async function POST(req: Request) {
     if (error instanceof CrudHttpError) {
       return NextResponse.json(error.body, { status: error.status })
     }
-    console.error('[booking.services.POST] Unexpected error', error)
-    return NextResponse.json({ error: 'Failed to create booking service' }, { status: 500 })
+    console.error('[booking.availability.POST] Unexpected error', error)
+    return NextResponse.json({ error: 'Failed to create booking availability rule' }, { status: 500 })
   }
 }
 
@@ -171,43 +166,36 @@ export async function PATCH(req: Request) {
     const context = await resolveBookingRouteContext(req)
     const raw = await req.json().catch(() => ({}))
     const parsed = bookingScopedHelpers.parseScopedCommandInput(
-      serviceUpdateSchema,
+      availabilityRuleUpdateSchema,
       raw,
       context.ctx,
       context.translate,
       { requireOrganization: false },
-    ) as ServiceUpdateInput
+    ) as BookingAvailabilityRuleUpdateInput
 
     ensureOrganizationAccess(parsed.organization_id ?? null, context.organizationIds)
 
     const commandBus = context.container.resolve('commandBus') as CommandBus
-    const commandInput = mapServiceUpdateInput(parsed)
-    const { result, logEntry } = await commandBus.execute('booking.services.update', {
-      input: commandInput,
+    const { result, logEntry } = await commandBus.execute('booking.availability.update', {
+      input: mapAvailabilityUpdateInput(parsed),
       ctx: context.ctx,
     })
 
-    const serviceId = (result as { serviceId?: string | null } | null)?.serviceId ?? parsed.id
-    const record = await context.em.findOne(BookingService, { id: serviceId })
+    const availabilityId = (result as { availabilityId?: string | null } | null)?.availabilityId ?? parsed.id
+    const record = await context.em.findOne(BookingAvailabilityRule, { id: availabilityId })
     if (!record) {
-      throw new CrudHttpError(404, { error: 'Booking service not found after update' })
+      throw new CrudHttpError(404, { error: 'Booking availability rule not found after update' })
     }
 
     const response = NextResponse.json({
       id: record.id,
       tenantId: record.tenantId,
       organizationId: record.organizationId,
-      name: record.name,
-      description: record.description ?? null,
-      durationMinutes: record.durationMinutes,
-      capacityModel: record.capacityModel,
-      maxAttendees: record.maxAttendees ?? null,
-      requiredRoles: record.requiredRoles,
-      requiredMembers: record.requiredMembers,
-      requiredResources: record.requiredResources,
-      requiredResourceTypes: record.requiredResourceTypes,
-      tags: record.tags,
-      isActive: record.isActive,
+      subjectType: record.subjectType,
+      subjectId: record.subjectId,
+      timezone: record.timezone,
+      rrule: record.rrule,
+      exdates: record.exdates,
       createdAt: record.createdAt,
       updatedAt: record.updatedAt,
     })
@@ -220,7 +208,7 @@ export async function PATCH(req: Request) {
           undoToken: logEntry.undoToken,
           commandId: logEntry.commandId,
           actionLabel: logEntry.actionLabel ?? null,
-          resourceKind: 'booking.service',
+          resourceKind: 'booking.availability',
           resourceId: record.id,
           executedAt: logEntry.createdAt instanceof Date ? logEntry.createdAt.toISOString() : undefined,
         }),
@@ -232,8 +220,8 @@ export async function PATCH(req: Request) {
     if (error instanceof CrudHttpError) {
       return NextResponse.json(error.body, { status: error.status })
     }
-    console.error('[booking.services.PATCH] Unexpected error', error)
-    return NextResponse.json({ error: 'Failed to update booking service' }, { status: 500 })
+    console.error('[booking.availability.PATCH] Unexpected error', error)
+    return NextResponse.json({ error: 'Failed to update booking availability rule' }, { status: 500 })
   }
 }
 
@@ -246,13 +234,13 @@ export async function DELETE(req: Request) {
     const parsed = deleteSchema.parse({ id })
 
     const commandBus = context.container.resolve('commandBus') as CommandBus
-    const { result, logEntry } = await commandBus.execute('booking.services.delete', {
+    const { result, logEntry } = await commandBus.execute('booking.availability.delete', {
       input: { id: parsed.id },
       ctx: context.ctx,
     })
 
-    const serviceId = (result as { serviceId?: string | null } | null)?.serviceId ?? parsed.id
-    const response = NextResponse.json({ id: serviceId })
+    const availabilityId = (result as { availabilityId?: string | null } | null)?.availabilityId ?? parsed.id
+    const response = NextResponse.json({ id: availabilityId })
 
     if (logEntry?.undoToken && logEntry?.id && logEntry?.commandId) {
       response.headers.set(
@@ -262,8 +250,8 @@ export async function DELETE(req: Request) {
           undoToken: logEntry.undoToken,
           commandId: logEntry.commandId,
           actionLabel: logEntry.actionLabel ?? null,
-          resourceKind: 'booking.service',
-          resourceId: serviceId,
+          resourceKind: 'booking.availability',
+          resourceId: availabilityId,
           executedAt: logEntry.createdAt instanceof Date ? logEntry.createdAt.toISOString() : undefined,
         }),
       )
@@ -274,8 +262,8 @@ export async function DELETE(req: Request) {
     if (error instanceof CrudHttpError) {
       return NextResponse.json(error.body, { status: error.status })
     }
-    console.error('[booking.services.DELETE] Unexpected error', error)
-    return NextResponse.json({ error: 'Failed to delete booking service' }, { status: 500 })
+    console.error('[booking.availability.DELETE] Unexpected error', error)
+    return NextResponse.json({ error: 'Failed to delete booking availability rule' }, { status: 500 })
   }
 }
 

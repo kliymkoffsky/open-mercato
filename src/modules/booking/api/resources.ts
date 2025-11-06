@@ -3,17 +3,17 @@ import { z } from 'zod'
 import type { CommandBus } from '@open-mercato/shared/lib/commands'
 import { CrudHttpError } from '@open-mercato/shared/lib/crud/errors'
 import { serializeOperationMetadata } from '@open-mercato/shared/lib/commands/operationMetadata'
-import { BookingService } from '../data/entities'
+import { BookingResource } from '../data/entities'
 import {
-  serviceCreateSchema,
-  serviceUpdateSchema,
-  type ServiceCreateInput,
-  type ServiceUpdateInput,
+  resourceCreateSchema,
+  resourceUpdateSchema,
+  type BookingResourceCreateInput,
+  type BookingResourceUpdateInput,
 } from '../data/validators'
 import {
-  mapServiceCreateInputForCommand,
-  mapServiceUpdateInput,
-} from '../commands/services'
+  mapResourceCreateInput,
+  mapResourceUpdateInput,
+} from '../commands/resources'
 import {
   bookingScopedHelpers,
   ensureOrganizationAccess,
@@ -25,10 +25,10 @@ const { withScopedPayload } = bookingScopedHelpers
 const deleteSchema = z.object({ id: z.string().uuid() })
 
 const routeMetadata = {
-  GET: { requireAuth: true, requireFeatures: ['booking.services.manage'] },
-  POST: { requireAuth: true, requireFeatures: ['booking.services.manage'] },
-  PATCH: { requireAuth: true, requireFeatures: ['booking.services.manage'] },
-  DELETE: { requireAuth: true, requireFeatures: ['booking.services.manage'] },
+  GET: { requireAuth: true, requireFeatures: ['booking.resources.manage'] },
+  POST: { requireAuth: true, requireFeatures: ['booking.resources.manage'] },
+  PATCH: { requireAuth: true, requireFeatures: ['booking.resources.manage'] },
+  DELETE: { requireAuth: true, requireFeatures: ['booking.resources.manage'] },
 }
 
 export const metadata = routeMetadata
@@ -38,6 +38,7 @@ export async function GET(req: Request) {
     const context = await resolveBookingRouteContext(req)
     const url = new URL(req.url)
     const organizationParam = url.searchParams.get('organizationId')
+    const resourceTypeParam = url.searchParams.get('resourceTypeId')
     const scoped = withScopedPayload(
       {
         tenantId: context.tenantId,
@@ -58,25 +59,22 @@ export async function GET(req: Request) {
     } else if (context.organizationIds && context.organizationIds.length > 0) {
       filter.organizationId = { $in: context.organizationIds }
     }
+    if (resourceTypeParam) {
+      filter.resourceTypeId = resourceTypeParam
+    }
 
-    const services = await context.em.find(BookingService, filter, { orderBy: { name: 'asc' } })
-    const payload = services.map((service) => ({
-      id: service.id,
-      tenantId: service.tenantId,
-      organizationId: service.organizationId,
-      name: service.name,
-      description: service.description ?? null,
-      durationMinutes: service.durationMinutes,
-      capacityModel: service.capacityModel,
-      maxAttendees: service.maxAttendees ?? null,
-      requiredRoles: service.requiredRoles,
-      requiredMembers: service.requiredMembers,
-      requiredResources: service.requiredResources,
-      requiredResourceTypes: service.requiredResourceTypes,
-      tags: service.tags,
-      isActive: service.isActive,
-      createdAt: service.createdAt,
-      updatedAt: service.updatedAt,
+    const resources = await context.em.find(BookingResource, filter, { orderBy: { name: 'asc' } })
+    const payload = resources.map((resource) => ({
+      id: resource.id,
+      tenantId: resource.tenantId,
+      organizationId: resource.organizationId,
+      name: resource.name,
+      resourceTypeId: resource.resourceTypeId ?? null,
+      capacity: resource.capacity ?? null,
+      tags: resource.tags,
+      isActive: resource.isActive,
+      createdAt: resource.createdAt,
+      updatedAt: resource.updatedAt,
     }))
 
     return NextResponse.json({ items: payload })
@@ -84,8 +82,8 @@ export async function GET(req: Request) {
     if (error instanceof CrudHttpError) {
       return NextResponse.json(error.body, { status: error.status })
     }
-    console.error('[booking.services.GET] Unexpected error', error)
-    return NextResponse.json({ error: 'Failed to load booking services' }, { status: 500 })
+    console.error('[booking.resources.GET] Unexpected error', error)
+    return NextResponse.json({ error: 'Failed to load booking resources' }, { status: 500 })
   }
 }
 
@@ -94,29 +92,28 @@ export async function POST(req: Request) {
     const context = await resolveBookingRouteContext(req)
     const raw = await req.json().catch(() => ({}))
     const parsed = bookingScopedHelpers.parseScopedCommandInput(
-      serviceCreateSchema,
+      resourceCreateSchema,
       raw,
       context.ctx,
       context.translate,
-    ) as ServiceCreateInput
+    ) as BookingResourceCreateInput
 
     ensureOrganizationAccess(parsed.organization_id ?? null, context.organizationIds)
 
     const commandBus = context.container.resolve('commandBus') as CommandBus
-    const commandInput = mapServiceCreateInputForCommand(parsed)
-    const { result, logEntry } = await commandBus.execute('booking.services.create', {
-      input: commandInput,
+    const { result, logEntry } = await commandBus.execute('booking.resources.create', {
+      input: mapResourceCreateInput(parsed),
       ctx: context.ctx,
     })
 
-    const serviceId = (result as { serviceId?: string | null } | null)?.serviceId
-    if (!serviceId) {
-      throw new CrudHttpError(500, { error: 'Failed to create booking service' })
+    const resourceId = (result as { resourceId?: string | null } | null)?.resourceId
+    if (!resourceId) {
+      throw new CrudHttpError(500, { error: 'Failed to create booking resource' })
     }
 
-    const record = await context.em.findOne(BookingService, { id: serviceId })
+    const record = await context.em.findOne(BookingResource, { id: resourceId })
     if (!record) {
-      throw new CrudHttpError(500, { error: 'Failed to load created booking service' })
+      throw new CrudHttpError(500, { error: 'Failed to load created booking resource' })
     }
 
     const response = NextResponse.json(
@@ -125,14 +122,8 @@ export async function POST(req: Request) {
         tenantId: record.tenantId,
         organizationId: record.organizationId,
         name: record.name,
-        description: record.description ?? null,
-        durationMinutes: record.durationMinutes,
-        capacityModel: record.capacityModel,
-        maxAttendees: record.maxAttendees ?? null,
-        requiredRoles: record.requiredRoles,
-        requiredMembers: record.requiredMembers,
-        requiredResources: record.requiredResources,
-        requiredResourceTypes: record.requiredResourceTypes,
+        resourceTypeId: record.resourceTypeId ?? null,
+        capacity: record.capacity ?? null,
         tags: record.tags,
         isActive: record.isActive,
         createdAt: record.createdAt,
@@ -149,7 +140,7 @@ export async function POST(req: Request) {
           undoToken: logEntry.undoToken,
           commandId: logEntry.commandId,
           actionLabel: logEntry.actionLabel ?? null,
-          resourceKind: 'booking.service',
+          resourceKind: 'booking.resource',
           resourceId: record.id,
           executedAt: logEntry.createdAt instanceof Date ? logEntry.createdAt.toISOString() : undefined,
         }),
@@ -161,8 +152,8 @@ export async function POST(req: Request) {
     if (error instanceof CrudHttpError) {
       return NextResponse.json(error.body, { status: error.status })
     }
-    console.error('[booking.services.POST] Unexpected error', error)
-    return NextResponse.json({ error: 'Failed to create booking service' }, { status: 500 })
+    console.error('[booking.resources.POST] Unexpected error', error)
+    return NextResponse.json({ error: 'Failed to create booking resource' }, { status: 500 })
   }
 }
 
@@ -171,26 +162,25 @@ export async function PATCH(req: Request) {
     const context = await resolveBookingRouteContext(req)
     const raw = await req.json().catch(() => ({}))
     const parsed = bookingScopedHelpers.parseScopedCommandInput(
-      serviceUpdateSchema,
+      resourceUpdateSchema,
       raw,
       context.ctx,
       context.translate,
       { requireOrganization: false },
-    ) as ServiceUpdateInput
+    ) as BookingResourceUpdateInput
 
     ensureOrganizationAccess(parsed.organization_id ?? null, context.organizationIds)
 
     const commandBus = context.container.resolve('commandBus') as CommandBus
-    const commandInput = mapServiceUpdateInput(parsed)
-    const { result, logEntry } = await commandBus.execute('booking.services.update', {
-      input: commandInput,
+    const { result, logEntry } = await commandBus.execute('booking.resources.update', {
+      input: mapResourceUpdateInput(parsed),
       ctx: context.ctx,
     })
 
-    const serviceId = (result as { serviceId?: string | null } | null)?.serviceId ?? parsed.id
-    const record = await context.em.findOne(BookingService, { id: serviceId })
+    const resourceId = (result as { resourceId?: string | null } | null)?.resourceId ?? parsed.id
+    const record = await context.em.findOne(BookingResource, { id: resourceId })
     if (!record) {
-      throw new CrudHttpError(404, { error: 'Booking service not found after update' })
+      throw new CrudHttpError(404, { error: 'Booking resource not found after update' })
     }
 
     const response = NextResponse.json({
@@ -198,14 +188,8 @@ export async function PATCH(req: Request) {
       tenantId: record.tenantId,
       organizationId: record.organizationId,
       name: record.name,
-      description: record.description ?? null,
-      durationMinutes: record.durationMinutes,
-      capacityModel: record.capacityModel,
-      maxAttendees: record.maxAttendees ?? null,
-      requiredRoles: record.requiredRoles,
-      requiredMembers: record.requiredMembers,
-      requiredResources: record.requiredResources,
-      requiredResourceTypes: record.requiredResourceTypes,
+      resourceTypeId: record.resourceTypeId ?? null,
+      capacity: record.capacity ?? null,
       tags: record.tags,
       isActive: record.isActive,
       createdAt: record.createdAt,
@@ -220,7 +204,7 @@ export async function PATCH(req: Request) {
           undoToken: logEntry.undoToken,
           commandId: logEntry.commandId,
           actionLabel: logEntry.actionLabel ?? null,
-          resourceKind: 'booking.service',
+          resourceKind: 'booking.resource',
           resourceId: record.id,
           executedAt: logEntry.createdAt instanceof Date ? logEntry.createdAt.toISOString() : undefined,
         }),
@@ -232,8 +216,8 @@ export async function PATCH(req: Request) {
     if (error instanceof CrudHttpError) {
       return NextResponse.json(error.body, { status: error.status })
     }
-    console.error('[booking.services.PATCH] Unexpected error', error)
-    return NextResponse.json({ error: 'Failed to update booking service' }, { status: 500 })
+    console.error('[booking.resources.PATCH] Unexpected error', error)
+    return NextResponse.json({ error: 'Failed to update booking resource' }, { status: 500 })
   }
 }
 
@@ -246,13 +230,13 @@ export async function DELETE(req: Request) {
     const parsed = deleteSchema.parse({ id })
 
     const commandBus = context.container.resolve('commandBus') as CommandBus
-    const { result, logEntry } = await commandBus.execute('booking.services.delete', {
+    const { result, logEntry } = await commandBus.execute('booking.resources.delete', {
       input: { id: parsed.id },
       ctx: context.ctx,
     })
 
-    const serviceId = (result as { serviceId?: string | null } | null)?.serviceId ?? parsed.id
-    const response = NextResponse.json({ id: serviceId })
+    const resourceId = (result as { resourceId?: string | null } | null)?.resourceId ?? parsed.id
+    const response = NextResponse.json({ id: resourceId })
 
     if (logEntry?.undoToken && logEntry?.id && logEntry?.commandId) {
       response.headers.set(
@@ -262,8 +246,8 @@ export async function DELETE(req: Request) {
           undoToken: logEntry.undoToken,
           commandId: logEntry.commandId,
           actionLabel: logEntry.actionLabel ?? null,
-          resourceKind: 'booking.service',
-          resourceId: serviceId,
+          resourceKind: 'booking.resource',
+          resourceId: resourceId,
           executedAt: logEntry.createdAt instanceof Date ? logEntry.createdAt.toISOString() : undefined,
         }),
       )
@@ -274,8 +258,8 @@ export async function DELETE(req: Request) {
     if (error instanceof CrudHttpError) {
       return NextResponse.json(error.body, { status: error.status })
     }
-    console.error('[booking.services.DELETE] Unexpected error', error)
-    return NextResponse.json({ error: 'Failed to delete booking service' }, { status: 500 })
+    console.error('[booking.resources.DELETE] Unexpected error', error)
+    return NextResponse.json({ error: 'Failed to delete booking resource' }, { status: 500 })
   }
 }
 

@@ -3,17 +3,17 @@ import { z } from 'zod'
 import type { CommandBus } from '@open-mercato/shared/lib/commands'
 import { CrudHttpError } from '@open-mercato/shared/lib/crud/errors'
 import { serializeOperationMetadata } from '@open-mercato/shared/lib/commands/operationMetadata'
-import { BookingService } from '../data/entities'
+import { BookingTeamRole } from '../data/entities'
 import {
-  serviceCreateSchema,
-  serviceUpdateSchema,
-  type ServiceCreateInput,
-  type ServiceUpdateInput,
+  teamRoleCreateSchema,
+  teamRoleUpdateSchema,
+  type BookingTeamRoleCreateInput,
+  type BookingTeamRoleUpdateInput,
 } from '../data/validators'
 import {
-  mapServiceCreateInputForCommand,
-  mapServiceUpdateInput,
-} from '../commands/services'
+  mapTeamRoleCreateInput,
+  mapTeamRoleUpdateInput,
+} from '../commands/teamRoles'
 import {
   bookingScopedHelpers,
   ensureOrganizationAccess,
@@ -25,10 +25,10 @@ const { withScopedPayload } = bookingScopedHelpers
 const deleteSchema = z.object({ id: z.string().uuid() })
 
 const routeMetadata = {
-  GET: { requireAuth: true, requireFeatures: ['booking.services.manage'] },
-  POST: { requireAuth: true, requireFeatures: ['booking.services.manage'] },
-  PATCH: { requireAuth: true, requireFeatures: ['booking.services.manage'] },
-  DELETE: { requireAuth: true, requireFeatures: ['booking.services.manage'] },
+  GET: { requireAuth: true, requireFeatures: ['booking.members.manage'] },
+  POST: { requireAuth: true, requireFeatures: ['booking.members.manage'] },
+  PATCH: { requireAuth: true, requireFeatures: ['booking.members.manage'] },
+  DELETE: { requireAuth: true, requireFeatures: ['booking.members.manage'] },
 }
 
 export const metadata = routeMetadata
@@ -59,24 +59,15 @@ export async function GET(req: Request) {
       filter.organizationId = { $in: context.organizationIds }
     }
 
-    const services = await context.em.find(BookingService, filter, { orderBy: { name: 'asc' } })
-    const payload = services.map((service) => ({
-      id: service.id,
-      tenantId: service.tenantId,
-      organizationId: service.organizationId,
-      name: service.name,
-      description: service.description ?? null,
-      durationMinutes: service.durationMinutes,
-      capacityModel: service.capacityModel,
-      maxAttendees: service.maxAttendees ?? null,
-      requiredRoles: service.requiredRoles,
-      requiredMembers: service.requiredMembers,
-      requiredResources: service.requiredResources,
-      requiredResourceTypes: service.requiredResourceTypes,
-      tags: service.tags,
-      isActive: service.isActive,
-      createdAt: service.createdAt,
-      updatedAt: service.updatedAt,
+    const roles = await context.em.find(BookingTeamRole, filter, { orderBy: { name: 'asc' } })
+    const payload = roles.map((role) => ({
+      id: role.id,
+      tenantId: role.tenantId,
+      organizationId: role.organizationId,
+      name: role.name,
+      description: role.description ?? null,
+      createdAt: role.createdAt,
+      updatedAt: role.updatedAt,
     }))
 
     return NextResponse.json({ items: payload })
@@ -84,8 +75,8 @@ export async function GET(req: Request) {
     if (error instanceof CrudHttpError) {
       return NextResponse.json(error.body, { status: error.status })
     }
-    console.error('[booking.services.GET] Unexpected error', error)
-    return NextResponse.json({ error: 'Failed to load booking services' }, { status: 500 })
+    console.error('[booking.team_roles.GET] Unexpected error', error)
+    return NextResponse.json({ error: 'Failed to load booking team roles' }, { status: 500 })
   }
 }
 
@@ -94,29 +85,28 @@ export async function POST(req: Request) {
     const context = await resolveBookingRouteContext(req)
     const raw = await req.json().catch(() => ({}))
     const parsed = bookingScopedHelpers.parseScopedCommandInput(
-      serviceCreateSchema,
+      teamRoleCreateSchema,
       raw,
       context.ctx,
       context.translate,
-    ) as ServiceCreateInput
+    ) as BookingTeamRoleCreateInput
 
     ensureOrganizationAccess(parsed.organization_id ?? null, context.organizationIds)
 
     const commandBus = context.container.resolve('commandBus') as CommandBus
-    const commandInput = mapServiceCreateInputForCommand(parsed)
-    const { result, logEntry } = await commandBus.execute('booking.services.create', {
-      input: commandInput,
+    const { result, logEntry } = await commandBus.execute('booking.team_roles.create', {
+      input: mapTeamRoleCreateInput(parsed),
       ctx: context.ctx,
     })
 
-    const serviceId = (result as { serviceId?: string | null } | null)?.serviceId
-    if (!serviceId) {
-      throw new CrudHttpError(500, { error: 'Failed to create booking service' })
+    const roleId = (result as { roleId?: string | null } | null)?.roleId
+    if (!roleId) {
+      throw new CrudHttpError(500, { error: 'Failed to create booking team role' })
     }
 
-    const record = await context.em.findOne(BookingService, { id: serviceId })
+    const record = await context.em.findOne(BookingTeamRole, { id: roleId })
     if (!record) {
-      throw new CrudHttpError(500, { error: 'Failed to load created booking service' })
+      throw new CrudHttpError(500, { error: 'Failed to load created booking team role' })
     }
 
     const response = NextResponse.json(
@@ -126,15 +116,6 @@ export async function POST(req: Request) {
         organizationId: record.organizationId,
         name: record.name,
         description: record.description ?? null,
-        durationMinutes: record.durationMinutes,
-        capacityModel: record.capacityModel,
-        maxAttendees: record.maxAttendees ?? null,
-        requiredRoles: record.requiredRoles,
-        requiredMembers: record.requiredMembers,
-        requiredResources: record.requiredResources,
-        requiredResourceTypes: record.requiredResourceTypes,
-        tags: record.tags,
-        isActive: record.isActive,
         createdAt: record.createdAt,
         updatedAt: record.updatedAt,
       },
@@ -149,7 +130,7 @@ export async function POST(req: Request) {
           undoToken: logEntry.undoToken,
           commandId: logEntry.commandId,
           actionLabel: logEntry.actionLabel ?? null,
-          resourceKind: 'booking.service',
+          resourceKind: 'booking.team_role',
           resourceId: record.id,
           executedAt: logEntry.createdAt instanceof Date ? logEntry.createdAt.toISOString() : undefined,
         }),
@@ -161,8 +142,8 @@ export async function POST(req: Request) {
     if (error instanceof CrudHttpError) {
       return NextResponse.json(error.body, { status: error.status })
     }
-    console.error('[booking.services.POST] Unexpected error', error)
-    return NextResponse.json({ error: 'Failed to create booking service' }, { status: 500 })
+    console.error('[booking.team_roles.POST] Unexpected error', error)
+    return NextResponse.json({ error: 'Failed to create booking team role' }, { status: 500 })
   }
 }
 
@@ -171,26 +152,25 @@ export async function PATCH(req: Request) {
     const context = await resolveBookingRouteContext(req)
     const raw = await req.json().catch(() => ({}))
     const parsed = bookingScopedHelpers.parseScopedCommandInput(
-      serviceUpdateSchema,
+      teamRoleUpdateSchema,
       raw,
       context.ctx,
       context.translate,
       { requireOrganization: false },
-    ) as ServiceUpdateInput
+    ) as BookingTeamRoleUpdateInput
 
     ensureOrganizationAccess(parsed.organization_id ?? null, context.organizationIds)
 
     const commandBus = context.container.resolve('commandBus') as CommandBus
-    const commandInput = mapServiceUpdateInput(parsed)
-    const { result, logEntry } = await commandBus.execute('booking.services.update', {
-      input: commandInput,
+    const { result, logEntry } = await commandBus.execute('booking.team_roles.update', {
+      input: mapTeamRoleUpdateInput(parsed),
       ctx: context.ctx,
     })
 
-    const serviceId = (result as { serviceId?: string | null } | null)?.serviceId ?? parsed.id
-    const record = await context.em.findOne(BookingService, { id: serviceId })
+    const roleId = (result as { roleId?: string | null } | null)?.roleId ?? parsed.id
+    const record = await context.em.findOne(BookingTeamRole, { id: roleId })
     if (!record) {
-      throw new CrudHttpError(404, { error: 'Booking service not found after update' })
+      throw new CrudHttpError(404, { error: 'Booking team role not found after update' })
     }
 
     const response = NextResponse.json({
@@ -199,15 +179,6 @@ export async function PATCH(req: Request) {
       organizationId: record.organizationId,
       name: record.name,
       description: record.description ?? null,
-      durationMinutes: record.durationMinutes,
-      capacityModel: record.capacityModel,
-      maxAttendees: record.maxAttendees ?? null,
-      requiredRoles: record.requiredRoles,
-      requiredMembers: record.requiredMembers,
-      requiredResources: record.requiredResources,
-      requiredResourceTypes: record.requiredResourceTypes,
-      tags: record.tags,
-      isActive: record.isActive,
       createdAt: record.createdAt,
       updatedAt: record.updatedAt,
     })
@@ -220,7 +191,7 @@ export async function PATCH(req: Request) {
           undoToken: logEntry.undoToken,
           commandId: logEntry.commandId,
           actionLabel: logEntry.actionLabel ?? null,
-          resourceKind: 'booking.service',
+          resourceKind: 'booking.team_role',
           resourceId: record.id,
           executedAt: logEntry.createdAt instanceof Date ? logEntry.createdAt.toISOString() : undefined,
         }),
@@ -232,8 +203,8 @@ export async function PATCH(req: Request) {
     if (error instanceof CrudHttpError) {
       return NextResponse.json(error.body, { status: error.status })
     }
-    console.error('[booking.services.PATCH] Unexpected error', error)
-    return NextResponse.json({ error: 'Failed to update booking service' }, { status: 500 })
+    console.error('[booking.team_roles.PATCH] Unexpected error', error)
+    return NextResponse.json({ error: 'Failed to update booking team role' }, { status: 500 })
   }
 }
 
@@ -246,13 +217,13 @@ export async function DELETE(req: Request) {
     const parsed = deleteSchema.parse({ id })
 
     const commandBus = context.container.resolve('commandBus') as CommandBus
-    const { result, logEntry } = await commandBus.execute('booking.services.delete', {
+    const { result, logEntry } = await commandBus.execute('booking.team_roles.delete', {
       input: { id: parsed.id },
       ctx: context.ctx,
     })
 
-    const serviceId = (result as { serviceId?: string | null } | null)?.serviceId ?? parsed.id
-    const response = NextResponse.json({ id: serviceId })
+    const roleId = (result as { roleId?: string | null } | null)?.roleId ?? parsed.id
+    const response = NextResponse.json({ id: roleId })
 
     if (logEntry?.undoToken && logEntry?.id && logEntry?.commandId) {
       response.headers.set(
@@ -262,8 +233,8 @@ export async function DELETE(req: Request) {
           undoToken: logEntry.undoToken,
           commandId: logEntry.commandId,
           actionLabel: logEntry.actionLabel ?? null,
-          resourceKind: 'booking.service',
-          resourceId: serviceId,
+          resourceKind: 'booking.team_role',
+          resourceId: roleId,
           executedAt: logEntry.createdAt instanceof Date ? logEntry.createdAt.toISOString() : undefined,
         }),
       )
@@ -274,8 +245,8 @@ export async function DELETE(req: Request) {
     if (error instanceof CrudHttpError) {
       return NextResponse.json(error.body, { status: error.status })
     }
-    console.error('[booking.services.DELETE] Unexpected error', error)
-    return NextResponse.json({ error: 'Failed to delete booking service' }, { status: 500 })
+    console.error('[booking.team_roles.DELETE] Unexpected error', error)
+    return NextResponse.json({ error: 'Failed to delete booking team role' }, { status: 500 })
   }
 }
 

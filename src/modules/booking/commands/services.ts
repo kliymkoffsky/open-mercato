@@ -1,10 +1,11 @@
 import { registerCommand } from '@open-mercato/shared/lib/commands'
 import type { CommandHandler } from '@open-mercato/shared/lib/commands'
 import type { CommandRuntimeContext } from '@open-mercato/shared/lib/commands'
-import { CrudHttpError } from '@open-mercato/shared/lib/crud/errors'
 import type { EntityManager } from '@mikro-orm/postgresql'
+import { CrudHttpError } from '@open-mercato/shared/lib/crud/errors'
 import { BookingService } from '../data/entities'
 import type { ServiceCreateInput, ServiceUpdateInput } from '../data/validators'
+import { enforceScope } from './utils'
 
 type ServiceCreatePayload = {
   tenantId: string
@@ -26,31 +27,6 @@ type ServiceUpdatePayload = Partial<Omit<ServiceCreatePayload, 'tenantId' | 'org
   id: string
   tenantId?: string
   organizationId?: string
-}
-
-const SUPERADMIN_ROLE = 'superadmin'
-
-function isSuperAdmin(auth: CommandRuntimeContext['auth']): boolean {
-  if (!auth) return false
-  if ((auth as Record<string, unknown>).isSuperAdmin === true) return true
-  const roles = Array.isArray(auth.roles) ? auth.roles : []
-  return roles.some((role) => typeof role === 'string' && role.trim().toLowerCase() === SUPERADMIN_ROLE)
-}
-
-function enforceScope(ctx: CommandRuntimeContext, tenantId: string, organizationId: string | null): void {
-  const auth = ctx.auth
-  const superAdmin = isSuperAdmin(auth)
-  if (!superAdmin && auth?.tenantId && auth.tenantId !== tenantId) {
-    throw new CrudHttpError(403, { error: 'Forbidden: tenant scope mismatch' })
-  }
-
-  const allowedIds = ctx.organizationScope?.allowedIds
-  if (!organizationId || superAdmin || !allowedIds || allowedIds.length === 0) {
-    return
-  }
-  if (!allowedIds.includes(organizationId)) {
-    throw new CrudHttpError(403, { error: 'Forbidden: organization scope mismatch' })
-  }
 }
 
 function mapServiceCreateInput(input: ServiceCreateInput): ServiceCreatePayload {
