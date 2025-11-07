@@ -37,6 +37,7 @@ export async function GET(req: Request) {
   try {
     const context = await resolveBookingRouteContext(req)
     const url = new URL(req.url)
+    const id = url.searchParams.get('id')
     const organizationParam = url.searchParams.get('organizationId')
     const scoped = withScopedPayload(
       {
@@ -48,6 +49,30 @@ export async function GET(req: Request) {
     )
 
     ensureOrganizationAccess(scoped.organizationId ?? null, context.organizationIds)
+
+    if (id) {
+      const record = await context.em.findOne(BookingResourceType, {
+        id,
+        tenantId: scoped.tenantId,
+        deletedAt: null,
+      })
+      if (!record) {
+        throw new CrudHttpError(404, { error: 'Booking resource type not found' })
+      }
+      ensureOrganizationAccess(record.organizationId, context.organizationIds)
+
+      return NextResponse.json({
+        item: {
+          id: record.id,
+          tenantId: record.tenantId,
+          organizationId: record.organizationId,
+          name: record.name,
+          description: record.description ?? null,
+          createdAt: record.createdAt,
+          updatedAt: record.updatedAt,
+        },
+      })
+    }
 
     const filter: Record<string, unknown> = {
       tenantId: scoped.tenantId,

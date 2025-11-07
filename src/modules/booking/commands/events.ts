@@ -17,6 +17,7 @@ import type {
   BookingEventAttendeeCreateInput,
 } from '../data/validators'
 import { enforceScope } from './utils'
+import { ConflictChecker } from './conflicts'
 import {
   ensureNoEventConflicts,
   ensureWithinAvailability,
@@ -459,6 +460,8 @@ const createEventCommand: CommandHandler<EventCreatePayload, { eventId: string }
   id: 'booking.events.create',
   async execute(input, ctx) {
     const em = (ctx.container.resolve('em') as EntityManager).fork()
+    const conflictChecker = new ConflictChecker(em)
+
     return await em.transactional(async (tx) => {
       const service = await resolveService(tx, input.serviceId)
       enforceScope(ctx, service.tenantId, service.organizationId)
@@ -473,6 +476,14 @@ const createEventCommand: CommandHandler<EventCreatePayload, { eventId: string }
       )
       void teamMembers
       void bookingResources
+
+      await conflictChecker.assertNoConflicts({
+        tenantId: service.tenantId,
+        organizationId: service.organizationId,
+        spans: input.spans ?? [{ startsAt: input.startsAt, endsAt: input.endsAt }],
+        subjectMembers: input.members.map((member) => member.memberId),
+        subjectResources: input.resources,
+      })
 
       const event = tx.create(BookingEvent, {
         tenantId: service.tenantId,
@@ -505,6 +516,7 @@ const updateEventCommand: CommandHandler<EventUpdatePayload, { eventId: string }
   id: 'booking.events.update',
   async execute(input, ctx) {
     const em = (ctx.container.resolve('em') as EntityManager).fork()
+    const conflictChecker = new ConflictChecker(em)
     return await em.transactional(async (tx) => {
       const event = await tx.findOne(BookingEvent, { id: input.id, deletedAt: null })
       if (!event) {
@@ -555,6 +567,16 @@ const updateEventCommand: CommandHandler<EventUpdatePayload, { eventId: string }
       )
       void teamMembers
       void bookingResources
+
+      const spanInputs = input.spans ?? [{ startsAt: input.startsAt ?? event.startsAt, endsAt: input.endsAt ?? event.endsAt }]
+      await conflictChecker.assertNoConflicts({
+        tenantId: service.tenantId,
+        organizationId: service.organizationId,
+        spans: spanInputs,
+        subjectMembers: members.map((member) => member.memberId),
+        subjectResources: resources,
+        ignoreEventId: event.id,
+      })
 
       buildEventEntity(event, { ...input, serviceId: service.id }, service)
 

@@ -1,7 +1,6 @@
-import { addMinutes, isBefore, isEqual, max as dateMax, min as dateMin } from 'date-fns'
+import { addMinutes, isBefore, max as dateMax, min as dateMin } from 'date-fns'
 import type { EntityManager } from '@mikro-orm/postgresql'
-import type { RecurringAvailability } from '@open-mercato/shared/lib/availability/types'
-import { expandRecurrence } from '@open-mercato/shared/lib/availability/recurrence'
+import { RRule } from 'rrule'
 import { CrudHttpError } from '@open-mercato/shared/lib/crud/errors'
 import {
   BookingAvailabilityRule,
@@ -68,6 +67,52 @@ export async function ensureNoEventConflicts(
   }
 }
 
+type RecurringAvailability = {
+  timezone: string
+  rrule: string
+  exdates: string[]
+}
+
+type RecurrenceWindow = {
+  start: Date
+  end: Date
+}
+
+function expandAvailability(
+  availability: RecurringAvailability,
+  window: { start: Date; end: Date },
+  durationMs: number,
+): RecurrenceWindow[] {
+  try {
+    const options = RRule.parseString(availability.rrule)
+    if (!options.dtstart) {
+      options.dtstart = window.start
+    }
+
+    const rule = new RRule(options)
+    const occurrences = rule.between(window.start, window.end, true)
+    const exceptions = new Set(
+      (availability.exdates ?? []).map((value) => {
+        const parsed = new Date(value)
+        return Number.isNaN(parsed.getTime()) ? value : parsed.toISOString()
+      }),
+    )
+
+    return occurrences
+      .filter((occurrence) => {
+        const iso = occurrence.toISOString()
+        return !exceptions.has(iso)
+      })
+      .map((occurrence) => ({
+        start: occurrence,
+        end: new Date(occurrence.getTime() + durationMs),
+      }))
+  } catch (error) {
+    console.warn('[booking.conflicts.expandAvailability] Failed to expand rule', { availability, error })
+    return []
+  }
+}
+
 export async function ensureWithinAvailability(
   em: EntityManager,
   tenantId: string,
@@ -92,6 +137,7 @@ export async function ensureWithinAvailability(
   const startWindow = dateMin([span.startsAt, addMinutes(span.startsAt, -spanDuration)])
   const endWindow = dateMax([span.endsAt, addMinutes(span.endsAt, spanDuration)])
 
+  const durationMs = spanDuration
   const availabilityWindows: RecurringAvailability[] = rules.map((rule) => ({
     timezone: rule.timezone,
     rrule: rule.rrule,
@@ -99,10 +145,14 @@ export async function ensureWithinAvailability(
   }))
 
   const expanded = availabilityWindows.flatMap((window) =>
-    expandRecurrence(window, {
-      start: startWindow,
-      end: endWindow,
-    }),
+    expandAvailability(
+      window,
+      {
+        start: startWindow,
+        end: endWindow,
+      },
+      durationMs,
+    ),
   )
 
   const fits = expanded.some((window) => {

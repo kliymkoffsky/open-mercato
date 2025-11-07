@@ -37,6 +37,7 @@ export async function GET(req: Request) {
   try {
     const context = await resolveBookingRouteContext(req)
     const url = new URL(req.url)
+    const id = url.searchParams.get('id')
     const organizationParam = url.searchParams.get('organizationId')
     const scoped = withScopedPayload(
       {
@@ -48,6 +49,39 @@ export async function GET(req: Request) {
     )
 
     ensureOrganizationAccess(scoped.organizationId ?? null, context.organizationIds)
+
+    if (id) {
+      const record = await context.em.findOne(BookingService, {
+        id,
+        tenantId: scoped.tenantId,
+        deletedAt: null,
+      })
+      if (!record) {
+        throw new CrudHttpError(404, { error: 'Booking service not found' })
+      }
+      ensureOrganizationAccess(record.organizationId, context.organizationIds)
+
+      return NextResponse.json({
+        item: {
+          id: record.id,
+          tenantId: record.tenantId,
+          organizationId: record.organizationId,
+          name: record.name,
+          description: record.description ?? null,
+          durationMinutes: record.durationMinutes,
+          capacityModel: record.capacityModel,
+          maxAttendees: record.maxAttendees ?? null,
+          requiredRoles: record.requiredRoles,
+          requiredMembers: record.requiredMembers,
+          requiredResources: record.requiredResources,
+          requiredResourceTypes: record.requiredResourceTypes,
+          tags: record.tags,
+          isActive: record.isActive,
+          createdAt: record.createdAt,
+          updatedAt: record.updatedAt,
+        },
+      })
+    }
 
     const filter: Record<string, unknown> = {
       tenantId: scoped.tenantId,

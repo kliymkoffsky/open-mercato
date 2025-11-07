@@ -168,11 +168,13 @@ export async function GET(req: Request) {
   try {
     const context = await resolveBookingRouteContext(req)
     const url = new URL(req.url)
+    const id = url.searchParams.get('id')
     const organizationParam = url.searchParams.get('organizationId')
     const serviceId = url.searchParams.get('serviceId')
     const status = url.searchParams.get('status')
     const startsFrom = url.searchParams.get('startsFrom')
     const startsTo = url.searchParams.get('startsTo')
+    const memberId = url.searchParams.get('memberId')
 
     const scoped = withScopedPayload(
       {
@@ -184,6 +186,35 @@ export async function GET(req: Request) {
     )
 
     ensureOrganizationAccess(scoped.organizationId ?? null, context.organizationIds)
+
+    if (id) {
+      const event = await context.em.findOne(BookingEvent, {
+        id,
+        tenantId: scoped.tenantId,
+        deletedAt: null,
+      })
+      if (!event) {
+        throw new CrudHttpError(404, { error: 'Booking event not found' })
+      }
+      ensureOrganizationAccess(event.organizationId, context.organizationIds)
+
+      const [eventAttendees, eventMembers, eventResources, service] = await Promise.all([
+        context.em.find(BookingEventAttendee, { eventId: event.id, deletedAt: null }),
+        context.em.find(BookingEventMember, { eventId: event.id, deletedAt: null }),
+        context.em.find(BookingEventResource, { eventId: event.id, deletedAt: null }),
+        context.em.findOne(BookingService, { id: event.serviceId }),
+      ])
+
+      return NextResponse.json({
+        item: mapEventToResponse(
+          event,
+          eventAttendees,
+          eventMembers,
+          eventResources,
+          service ?? null,
+        ),
+      })
+    }
 
     const filter: Record<string, unknown> = {
       tenantId: scoped.tenantId,
@@ -205,6 +236,26 @@ export async function GET(req: Request) {
     }
     if (startsTo) {
       filter.startsAt = { ...(filter.startsAt as Record<string, unknown> ?? {}), $lte: new Date(startsTo) }
+    }
+
+    if (memberId) {
+      const memberFilter: Record<string, unknown> = {
+        tenantId: scoped.tenantId,
+        memberId,
+        deletedAt: null,
+      }
+      if (scoped.organizationId) {
+        memberFilter.organizationId = scoped.organizationId
+      } else if (context.organizationIds && context.organizationIds.length > 0) {
+        memberFilter.organizationId = { $in: context.organizationIds }
+      }
+
+      const memberships = await context.em.find(BookingEventMember, memberFilter, { fields: ['eventId'] })
+      if (!memberships.length) {
+        return NextResponse.json({ items: [] })
+      }
+      const eventIdSet = new Set(memberships.map((row) => row.eventId))
+      filter.id = { $in: Array.from(eventIdSet) }
     }
 
     const events = await context.em.find(BookingEvent, filter, {

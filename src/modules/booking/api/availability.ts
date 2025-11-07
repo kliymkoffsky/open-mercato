@@ -37,6 +37,7 @@ export async function GET(req: Request) {
   try {
     const context = await resolveBookingRouteContext(req)
     const url = new URL(req.url)
+    const id = url.searchParams.get('id')
     const organizationParam = url.searchParams.get('organizationId')
     const subjectType = url.searchParams.get('subjectType')
     const subjectId = url.searchParams.get('subjectId')
@@ -51,6 +52,33 @@ export async function GET(req: Request) {
     )
 
     ensureOrganizationAccess(scoped.organizationId ?? null, context.organizationIds)
+
+    if (id) {
+      const record = await context.em.findOne(BookingAvailabilityRule, {
+        id,
+        tenantId: scoped.tenantId,
+        deletedAt: null,
+      })
+      if (!record) {
+        throw new CrudHttpError(404, { error: 'Booking availability rule not found' })
+      }
+      ensureOrganizationAccess(record.organizationId, context.organizationIds)
+
+      return NextResponse.json({
+        item: {
+          id: record.id,
+          tenantId: record.tenantId,
+          organizationId: record.organizationId,
+          subjectType: record.subjectType,
+          subjectId: record.subjectId,
+          timezone: record.timezone,
+          rrule: record.rrule,
+          exdates: record.exdates,
+          createdAt: record.createdAt,
+          updatedAt: record.updatedAt,
+        },
+      })
+    }
 
     const filter: Record<string, unknown> = {
       tenantId: scoped.tenantId,

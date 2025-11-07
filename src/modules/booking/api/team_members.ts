@@ -37,8 +37,10 @@ export async function GET(req: Request) {
   try {
     const context = await resolveBookingRouteContext(req)
     const url = new URL(req.url)
+    const id = url.searchParams.get('id')
     const organizationParam = url.searchParams.get('organizationId')
     const roleFilter = url.searchParams.get('roleId')
+    const userFilterParam = url.searchParams.get('userId')
     const scoped = withScopedPayload(
       {
         tenantId: context.tenantId,
@@ -49,6 +51,33 @@ export async function GET(req: Request) {
     )
 
     ensureOrganizationAccess(scoped.organizationId ?? null, context.organizationIds)
+
+    if (id) {
+      const record = await context.em.findOne(BookingTeamMember, {
+        id,
+        tenantId: scoped.tenantId,
+        deletedAt: null,
+      })
+      if (!record) {
+        throw new CrudHttpError(404, { error: 'Booking team member not found' })
+      }
+      ensureOrganizationAccess(record.organizationId, context.organizationIds)
+
+      return NextResponse.json({
+        item: {
+          id: record.id,
+          tenantId: record.tenantId,
+          organizationId: record.organizationId,
+          displayName: record.displayName,
+          userId: record.userId ?? null,
+          roleIds: record.roleIds,
+          tags: record.tags,
+          isActive: record.isActive,
+          createdAt: record.createdAt,
+          updatedAt: record.updatedAt,
+        },
+      })
+    }
 
     const filter: Record<string, unknown> = {
       tenantId: scoped.tenantId,
@@ -61,6 +90,20 @@ export async function GET(req: Request) {
     }
     if (roleFilter) {
       filter.roleIds = { $contains: [roleFilter] }
+    }
+    if (userFilterParam) {
+      let targetUserId: string | null = null
+      if (userFilterParam === 'current' || userFilterParam === 'me') {
+        targetUserId = context.ctx.auth?.userId ?? null
+      } else if (z.string().uuid().safeParse(userFilterParam).success) {
+        targetUserId = userFilterParam
+      }
+
+      if (!targetUserId) {
+        return NextResponse.json({ items: [] })
+      }
+
+      filter.userId = targetUserId
     }
 
     const members = await context.em.find(BookingTeamMember, filter, {
