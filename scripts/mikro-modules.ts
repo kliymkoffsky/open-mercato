@@ -128,6 +128,7 @@ async function run(cmd: Cmd) {
           if (newPath !== orig) fs.unlinkSync(orig)
           results.push(`${modId}: generated ${newBase}`)
         } catch (e) {
+          console.error(`rename failure for ${modId}:`, e)
           results.push(`${modId}: generated ${path.basename(diff.fileName)} (rename failed)`)  
         }
       } else {

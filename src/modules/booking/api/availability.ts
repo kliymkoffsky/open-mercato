@@ -3,7 +3,7 @@ import { z } from 'zod'
 import type { CommandBus } from '@open-mercato/shared/lib/commands'
 import { CrudHttpError } from '@open-mercato/shared/lib/crud/errors'
 import { serializeOperationMetadata } from '@open-mercato/shared/lib/commands/operationMetadata'
-import { BookingAvailabilityRule } from '../data/entities'
+import { BookingAvailabilityRule, BookingTeamMember } from '../data/entities'
 import {
   availabilityRuleCreateSchema,
   availabilityRuleUpdateSchema,
@@ -25,7 +25,7 @@ const { withScopedPayload } = bookingScopedHelpers
 const deleteSchema = z.object({ id: z.string().uuid() })
 
 const routeMetadata = {
-  GET: { requireAuth: true, requireFeatures: ['booking.members.manage'] },
+  GET: { requireAuth: true },
   POST: { requireAuth: true, requireFeatures: ['booking.members.manage'] },
   PATCH: { requireAuth: true, requireFeatures: ['booking.members.manage'] },
   DELETE: { requireAuth: true, requireFeatures: ['booking.members.manage'] },
@@ -53,6 +53,36 @@ export async function GET(req: Request) {
 
     ensureOrganizationAccess(scoped.organizationId ?? null, context.organizationIds)
 
+    const auth = context.ctx.auth
+    const grantedFeatures = new Set(auth?.features ?? [])
+    const hasManageFeature = grantedFeatures.has('booking.members.manage')
+    let allowedMemberIds: string[] | null = null
+
+    if (!hasManageFeature) {
+      const authUserId = auth?.userId ?? null
+      if (!authUserId) {
+        throw new CrudHttpError(403, { error: 'Forbidden: booking.members.manage feature required' })
+      }
+
+      const memberQuery: Record<string, unknown> = {
+        tenantId: scoped.tenantId,
+        userId: authUserId,
+        deletedAt: null,
+      }
+      if (scoped.organizationId) {
+        memberQuery.organizationId = scoped.organizationId
+      } else if (context.organizationIds && context.organizationIds.length > 0) {
+        memberQuery.organizationId = { $in: context.organizationIds }
+      }
+
+      const personalMembers = await context.em.find(BookingTeamMember, memberQuery, { fields: ['id'] })
+      allowedMemberIds = personalMembers.map((member) => member.id)
+
+      if (!allowedMemberIds.length) {
+        return NextResponse.json({ items: [] })
+      }
+    }
+
     if (id) {
       const record = await context.em.findOne(BookingAvailabilityRule, {
         id,
@@ -63,6 +93,12 @@ export async function GET(req: Request) {
         throw new CrudHttpError(404, { error: 'Booking availability rule not found' })
       }
       ensureOrganizationAccess(record.organizationId, context.organizationIds)
+
+      if (!hasManageFeature) {
+        if (record.subjectType !== 'member' || !allowedMemberIds?.includes(record.subjectId)) {
+          throw new CrudHttpError(403, { error: 'Forbidden: booking.members.manage feature required' })
+        }
+      }
 
       return NextResponse.json({
         item: {
@@ -91,6 +127,20 @@ export async function GET(req: Request) {
     }
     if (subjectType) filter.subjectType = subjectType
     if (subjectId) filter.subjectId = subjectId
+
+    if (!hasManageFeature) {
+      filter.subjectType = 'member'
+      if (subjectId) {
+        if (!allowedMemberIds?.includes(subjectId)) {
+          throw new CrudHttpError(403, { error: 'Forbidden: booking.members.manage feature required' })
+        }
+        filter.subjectId = subjectId
+      } else if (allowedMemberIds && allowedMemberIds.length === 1) {
+        filter.subjectId = allowedMemberIds[0]
+      } else if (allowedMemberIds && allowedMemberIds.length > 1) {
+        filter.subjectId = { $in: allowedMemberIds }
+      }
+    }
 
     const rules = await context.em.find(BookingAvailabilityRule, filter, {
       orderBy: { createdAt: 'desc' },

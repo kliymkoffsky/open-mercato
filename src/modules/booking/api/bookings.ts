@@ -9,6 +9,7 @@ import {
   BookingEventMember,
   BookingEventResource,
   BookingService,
+  BookingTeamMember,
 } from '../data/entities'
 import {
   eventCreateSchema,
@@ -187,6 +188,11 @@ export async function GET(req: Request) {
 
     ensureOrganizationAccess(scoped.organizationId ?? null, context.organizationIds)
 
+    const auth = context.ctx.auth
+    const grantedFeatures = new Set(auth?.features ?? [])
+    const hasBookingView = grantedFeatures.has('booking.view')
+    let allowedMemberIds: string[] | null = null
+
     if (id) {
       const event = await context.em.findOne(BookingEvent, {
         id,
@@ -238,6 +244,35 @@ export async function GET(req: Request) {
       filter.startsAt = { ...(filter.startsAt as Record<string, unknown> ?? {}), $lte: new Date(startsTo) }
     }
 
+    if (!hasBookingView) {
+      const authUserId = auth?.userId ?? null
+      if (!authUserId) {
+        throw new CrudHttpError(403, { error: 'Forbidden: booking.view feature required' })
+      }
+
+      const memberQuery: Record<string, unknown> = {
+        tenantId: scoped.tenantId,
+        userId: authUserId,
+        deletedAt: null,
+      }
+      if (scoped.organizationId) {
+        memberQuery.organizationId = scoped.organizationId
+      } else if (context.organizationIds && context.organizationIds.length > 0) {
+        memberQuery.organizationId = { $in: context.organizationIds }
+      }
+
+      const personalMembers = await context.em.find(BookingTeamMember, memberQuery, { fields: ['id'] })
+      allowedMemberIds = personalMembers.map((member) => member.id)
+
+      if (!allowedMemberIds.length) {
+        return NextResponse.json({ items: [] })
+      }
+
+      if (memberId && !allowedMemberIds.includes(memberId)) {
+        throw new CrudHttpError(403, { error: 'Forbidden: booking.view feature required' })
+      }
+    }
+
     if (memberId) {
       const memberFilter: Record<string, unknown> = {
         tenantId: scoped.tenantId,
@@ -251,6 +286,17 @@ export async function GET(req: Request) {
       }
 
       const memberships = await context.em.find(BookingEventMember, memberFilter, { fields: ['eventId'] })
+      if (!memberships.length) {
+        return NextResponse.json({ items: [] })
+      }
+      const eventIdSet = new Set(memberships.map((row) => row.eventId))
+      filter.id = { $in: Array.from(eventIdSet) }
+    } else if (allowedMemberIds && allowedMemberIds.length) {
+      const memberships = await context.em.find(BookingEventMember, {
+        tenantId: scoped.tenantId,
+        memberId: { $in: allowedMemberIds },
+        deletedAt: null,
+      }, { fields: ['eventId'] })
       if (!memberships.length) {
         return NextResponse.json({ items: [] })
       }

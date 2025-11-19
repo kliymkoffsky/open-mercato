@@ -27,3 +27,4 @@ export const metadata = {
     { label: 'Resource types', labelKey: 'booking.nav.resourceTypes' },
   ],
 }
+

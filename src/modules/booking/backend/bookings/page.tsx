@@ -124,7 +124,7 @@ export default function BookingEventsPage() {
     } catch (err) {
       const message = err instanceof Error ? err.message : t('booking.events.flash.loadError', 'Failed to load bookings.')
       setError(message)
-      flash({ type: 'error', message })
+      flash(message, 'error')
     } finally {
       setIsLoading(false)
     }
@@ -148,11 +148,11 @@ export default function BookingEventsPage() {
         const message = typeof payload?.error === 'string' ? payload.error : t('booking.events.flash.deleteError', 'Failed to delete booking.')
         throw new Error(message)
       }
-      flash({ type: 'success', message: t('booking.events.flash.deleted', 'Booking deleted.') })
+      flash(t('booking.events.flash.deleted', 'Booking deleted.'), 'success')
       setReloadToken((token) => token + 1)
     } catch (err) {
       const message = err instanceof Error ? err.message : t('booking.events.flash.deleteError', 'Failed to delete booking.')
-      flash({ type: 'error', message })
+      flash(message, 'error')
     }
   }, [t])
 
@@ -179,11 +179,18 @@ export default function BookingEventsPage() {
           onSearchChange={setSearch}
           searchPlaceholder={t('booking.events.search.placeholder', 'Search bookings...')}
           actions={(
-            <Button asChild>
-              <Link href="/backend/bookings/create">
-                {t('booking.events.actions.create', 'New booking')}
-              </Link>
-            </Button>
+            <>
+              <Button variant="outline" asChild>
+                <Link href="/backend/bookings/calendar">
+                  {t('booking.events.actions.calendar', 'Calendar view')}
+                </Link>
+              </Button>
+              <Button asChild>
+                <Link href="/backend/bookings/create">
+                  {t('booking.events.actions.create', 'New booking')}
+                </Link>
+              </Button>
+            </>
           )}
           refreshButton={{
             onRefresh: () => setReloadToken((token) => token + 1),

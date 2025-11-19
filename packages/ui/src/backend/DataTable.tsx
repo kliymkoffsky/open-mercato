@@ -728,25 +728,28 @@ export function DataTable<T>({
       setColumnOrder(next)
     },
   })
+  const columnIds = React.useMemo(() => table.getAllLeafColumns().map((column) => column.id), [table])
+  const columnIdsKey = columnIds.join('|')
   React.useEffect(() => { if (sortingProp) setSorting(sortingProp) }, [sortingProp])
   React.useEffect(() => {
-    const ids = table.getAllLeafColumns().map((column) => column.id)
-    if (!ids.length) return
+    if (!columnIds.length) return
+    const allowed = new Set(columnIds)
     setColumnOrder((prev) => {
-      if (!prev.length) return ids
-      const allowed = ids
-      const filtered = prev.filter((id) => allowed.includes(id))
-      const seen = new Set(filtered)
-      for (const id of allowed) {
+      const filtered = prev.filter((id) => allowed.has(id))
+      const next = filtered.length ? [...filtered] : []
+      const seen = new Set(next)
+      for (const id of columnIds) {
         if (!seen.has(id)) {
-          filtered.push(id)
+          next.push(id)
           seen.add(id)
         }
       }
-      const changed = filtered.length !== prev.length || filtered.some((id, index) => id !== prev[index])
-      return changed ? filtered : prev
+      if (next.length === prev.length && next.every((id, index) => id === prev[index])) {
+        return prev
+      }
+      return next
     })
-  }, [table, columns])
+  }, [columnIdsKey])
 
   const initialVisibilityApplied = React.useRef(Boolean(mergedInitialSettings?.columnVisibility))
   React.useEffect(() => {

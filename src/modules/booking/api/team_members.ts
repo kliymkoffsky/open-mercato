@@ -25,7 +25,7 @@ const { withScopedPayload } = bookingScopedHelpers
 const deleteSchema = z.object({ id: z.string().uuid() })
 
 const routeMetadata = {
-  GET: { requireAuth: true, requireFeatures: ['booking.members.manage'] },
+  GET: { requireAuth: true },
   POST: { requireAuth: true, requireFeatures: ['booking.members.manage'] },
   PATCH: { requireAuth: true, requireFeatures: ['booking.members.manage'] },
   DELETE: { requireAuth: true, requireFeatures: ['booking.members.manage'] },
@@ -51,6 +51,10 @@ export async function GET(req: Request) {
     )
 
     ensureOrganizationAccess(scoped.organizationId ?? null, context.organizationIds)
+
+    const auth = context.ctx.auth
+    const grantedFeatures = new Set(auth?.features ?? [])
+    const hasManageFeature = grantedFeatures.has('booking.members.manage')
 
     if (id) {
       const record = await context.em.findOne(BookingTeamMember, {
@@ -91,18 +95,30 @@ export async function GET(req: Request) {
     if (roleFilter) {
       filter.roleIds = { $contains: [roleFilter] }
     }
+    let targetUserId: string | null = null
     if (userFilterParam) {
-      let targetUserId: string | null = null
       if (userFilterParam === 'current' || userFilterParam === 'me') {
-        targetUserId = context.ctx.auth?.userId ?? null
+        targetUserId = auth?.userId ?? null
       } else if (z.string().uuid().safeParse(userFilterParam).success) {
         targetUserId = userFilterParam
       }
-
       if (!targetUserId) {
         return NextResponse.json({ items: [] })
       }
+    }
 
+    if (!hasManageFeature) {
+      const authUserId = auth?.userId ?? null
+      if (!authUserId) {
+        throw new CrudHttpError(403, { error: 'Forbidden: booking.members.manage feature required' })
+      }
+      targetUserId = targetUserId ?? authUserId
+      if (targetUserId !== authUserId) {
+        throw new CrudHttpError(403, { error: 'Forbidden: booking.members.manage feature required' })
+      }
+    }
+
+    if (targetUserId) {
       filter.userId = targetUserId
     }
 

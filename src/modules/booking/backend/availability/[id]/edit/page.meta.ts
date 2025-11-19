@@ -1,6 +1,6 @@
 export const metadata = {
   requireAuth: true,
-  requireFeatures: ['booking.members.manage'],
+  requireFeatures: ['booking.services.manage'],
   pageTitle: 'Edit availability rule',
   pageTitleKey: 'booking.availability.form.edit.title',
   breadcrumb: [

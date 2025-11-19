@@ -7,6 +7,7 @@ import { CrudForm, type CrudField, type CrudFormGroup } from '@open-mercato/ui/b
 import { apiFetch } from '@open-mercato/ui/backend/utils/api'
 import { flash } from '@open-mercato/ui/backend/FlashMessages'
 import { useT } from '@/lib/i18n/context'
+import { AvailabilityRuleBuilder } from '../../../../components/AvailabilityRuleBuilder'
 
 interface AvailabilityValues {
   id: string
@@ -62,6 +63,12 @@ export default function BookingAvailabilityEditPage() {
   const groups = React.useMemo<CrudFormGroup[]>(() => [
     { id: 'subject', title: t('booking.availability.form.groups.subject', 'Subject'), column: 1, fields: ['subject_type', 'subject_id'] },
     { id: 'timing', title: t('booking.availability.form.groups.timing', 'Timing'), column: 1, fields: ['timezone', 'rrule', 'exdates'] },
+    {
+      id: 'builder',
+      title: t('booking.availability.form.groups.builder', 'Visual builder'),
+      column: 2,
+      component: (ctx) => <AvailabilityRuleBuilder {...ctx} t={t} />,
+    },
   ], [t])
 
   const [initialValues, setInitialValues] = React.useState<Partial<AvailabilityValues> | undefined>(undefined)

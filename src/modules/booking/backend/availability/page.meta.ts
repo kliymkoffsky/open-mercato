@@ -14,12 +14,12 @@ const clockIcon = React.createElement('svg', {
 
 export const metadata = {
   requireAuth: true,
-  requireFeatures: ['booking.members.manage'],
+  requireFeatures: ['booking.services.manage'],
   pageTitle: 'Availability rules',
   pageTitleKey: 'booking.nav.availability',
   pageGroup: 'Booking',
   pageGroupKey: 'booking.nav.group',
-  pageOrder: 250,
+  pageOrder: 130,
   icon: clockIcon,
   breadcrumb: [
     { label: 'Booking', labelKey: 'booking.nav.group' },

@@ -22,7 +22,7 @@ export const metadata = {
   pageTitleKey: 'booking.nav.bookings',
   pageGroup: 'Booking',
   pageGroupKey: 'booking.nav.group',
-  pageOrder: 260,
+  pageOrder: 120,
   icon: calendarCheckIcon,
   breadcrumb: [
     { label: 'Booking', labelKey: 'booking.nav.group' },

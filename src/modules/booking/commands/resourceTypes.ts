@@ -112,3 +112,4 @@ export function mapResourceTypeUpdateInput(
   return payload
 }
 
+

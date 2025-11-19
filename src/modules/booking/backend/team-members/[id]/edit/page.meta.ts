@@ -9,3 +9,4 @@ export const metadata = {
     { label: 'Edit', labelKey: 'booking.nav.teamMembers.edit' },
   ],
 }
+

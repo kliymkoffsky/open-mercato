@@ -71,12 +71,14 @@ export async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Pr
   const res = await baseFetch(input, init);
   const onLoginPage = typeof window !== 'undefined' && window.location.pathname.startsWith('/login')
   if (res.status === 401) {
+    // TEMPORARILY DISABLED FOR DEBUGGING
+    console.error('🚫 [API] 401 Unauthorized:', input, '- REDIRECT DISABLED')
     // Trigger same redirect flow as protected pages
-    if (!onLoginPage) {
-      redirectToSessionRefresh()
-      // Throw a typed error for callers that might still handle it
-      throw new UnauthorizedError(await res.text().catch(() => 'Unauthorized'))
-    }
+    // if (!onLoginPage) {
+    //   redirectToSessionRefresh()
+    //   // Throw a typed error for callers that might still handle it
+    //   throw new UnauthorizedError(await res.text().catch(() => 'Unauthorized'))
+    // }
     return res
   }
   if (res.status === 403) {
@@ -92,29 +94,38 @@ export async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Pr
       if (data && typeof data === 'object') payload = data
     } catch {}
     // Only redirect if not already on login page
-    if (!onLoginPage) {
-      const target =
-        typeof input === 'string'
-          ? input
-          : input instanceof URL
-            ? input.toString()
-            : (typeof Request !== 'undefined' && input instanceof Request)
-              ? input.url
-              : 'unknown'
-      try {
-        // eslint-disable-next-line no-console
-        console.warn('[apiFetch] Forbidden response', {
-          url: target,
-          status: res.status,
-          requiredRoles: roles,
-          requiredFeatures: features,
-          details: payload,
-        })
-      } catch {}
-      redirectToForbiddenLogin({ requiredRoles: roles, requiredFeatures: features })
-      const msg = await res.text().catch(() => 'Forbidden')
-      throw new ForbiddenError(msg)
-    }
+    // TEMPORARILY DISABLED FOR DEBUGGING
+    const target =
+      typeof input === 'string'
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : (typeof Request !== 'undefined' && input instanceof Request)
+            ? input.url
+            : 'unknown'
+    console.error('🚫 [API] 403 Forbidden:', {
+      url: target,
+      status: res.status,
+      requiredRoles: roles,
+      requiredFeatures: features,
+      details: payload,
+    }, '- REDIRECT DISABLED')
+    
+    // if (!onLoginPage) {
+    //   try {
+    //     // eslint-disable-next-line no-console
+    //     console.warn('[apiFetch] Forbidden response', {
+    //       url: target,
+    //       status: res.status,
+    //       requiredRoles: roles,
+    //       requiredFeatures: features,
+    //       details: payload,
+    //     })
+    //   } catch {}
+    //   redirectToForbiddenLogin({ requiredRoles: roles, requiredFeatures: features })
+    //   const msg = await res.text().catch(() => 'Forbidden')
+    //   throw new ForbiddenError(msg)
+    // }
     // If already on login, just return the response for the caller to handle
   }
   try {

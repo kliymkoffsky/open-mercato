@@ -28,3 +28,4 @@ export const metadata = {
     { label: 'Team members', labelKey: 'booking.nav.teamMembers' },
   ],
 }
+

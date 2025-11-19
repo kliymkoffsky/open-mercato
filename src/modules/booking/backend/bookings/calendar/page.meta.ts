@@ -12,19 +12,23 @@ const calendarIcon = React.createElement('svg', {
   React.createElement('line', { x1: 16, y1: 2, x2: 16, y2: 6 }),
   React.createElement('line', { x1: 8, y1: 2, x2: 8, y2: 6 }),
   React.createElement('line', { x1: 3, y1: 10, x2: 21, y2: 10 }),
+  React.createElement('polyline', { points: '8 14 11 17 16 12' }),
 )
 
 export const metadata = {
   requireAuth: true,
-  requireFeatures: ['booking.services.manage'],
-  pageTitle: 'Booking services',
-  pageTitleKey: 'booking.nav.services',
+  requireFeatures: ['booking.view'],
+  navHidden: true,
+  pageTitle: 'Booking calendar',
+  pageTitleKey: 'booking.nav.calendar',
   pageGroup: 'Booking',
   pageGroupKey: 'booking.nav.group',
-  pageOrder: 200,
+  pageOrder: 110,
   icon: calendarIcon,
-  breadcrumb: [{ label: 'Booking', labelKey: 'booking.nav.group' }, { label: 'Services', labelKey: 'booking.nav.services' }],
+  breadcrumb: [
+    { label: 'Booking', labelKey: 'booking.nav.group' },
+    { label: 'Calendar', labelKey: 'booking.nav.calendar' },
+  ],
 }
-
 
 

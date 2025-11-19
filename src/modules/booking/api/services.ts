@@ -25,7 +25,7 @@ const { withScopedPayload } = bookingScopedHelpers
 const deleteSchema = z.object({ id: z.string().uuid() })
 
 const routeMetadata = {
-  GET: { requireAuth: true, requireFeatures: ['booking.services.manage'] },
+  GET: { requireAuth: true },
   POST: { requireAuth: true, requireFeatures: ['booking.services.manage'] },
   PATCH: { requireAuth: true, requireFeatures: ['booking.services.manage'] },
   DELETE: { requireAuth: true, requireFeatures: ['booking.services.manage'] },
