@@ -2,6 +2,7 @@ import { registerCommand } from '@open-mercato/shared/lib/commands'
 import type { CommandHandler } from '@open-mercato/shared/lib/commands'
 import { CrudHttpError } from '@open-mercato/shared/lib/crud/errors'
 import type { EntityManager } from '@mikro-orm/postgresql'
+import type { EventBus } from '@open-mercato/events/types'
 import {
   BookingEvent,
   BookingEventAttendee,
@@ -17,11 +18,7 @@ import type {
   BookingEventAttendeeCreateInput,
 } from '../data/validators'
 import { enforceScope } from './utils'
-import { ConflictChecker } from './conflicts'
-import {
-  ensureNoEventConflicts,
-  ensureWithinAvailability,
-} from '../lib/conflicts'
+import { AvailabilityService } from '../services/availability'
 
 type EventAttendeePayload = {
   firstName: string
@@ -336,7 +333,8 @@ async function validateEventPayload(
   attendees: EventAttendeePayload[],
   members: EventMemberPayload[],
   resources: EventResourcePayload[],
-  span: EventSpan,
+  startsAt: Date,
+  endsAt: Date,
   ignoreEventId?: string,
 ): Promise<{
   teamMembers: Map<string, LoadedTeamMember>
@@ -352,32 +350,15 @@ async function validateEventPayload(
     loadResources(em, resourceIds, service.tenantId, service.organizationId),
   ])
 
-  await ensureNoEventConflicts(
-    em,
+  // Use AvailabilityService for validation
+  const availabilityService = new AvailabilityService(em)
+  await availabilityService.validateAvailability(
     service.tenantId,
     service.organizationId,
-    span,
-    teamMemberIds,
-    resourceIds,
+    service.id,
+    startsAt,
+    endsAt,
     ignoreEventId,
-  )
-
-  await ensureWithinAvailability(
-    em,
-    service.tenantId,
-    service.organizationId,
-    span,
-    'member',
-    teamMemberIds,
-  )
-
-  await ensureWithinAvailability(
-    em,
-    service.tenantId,
-    service.organizationId,
-    span,
-    'resource',
-    resourceIds,
   )
 
   validateTeamMemberAssignments(members, teamMembers)
@@ -456,13 +437,25 @@ function persistResources(em: EntityManager, event: BookingEvent, resources: Eve
   }
 }
 
+async function emitEvent(
+  ctx: { container: { resolve: <T>(name: string) => T } },
+  eventName: string,
+  payload: any,
+): Promise<void> {
+  try {
+    const eventBus = ctx.container.resolve<EventBus>('eventBus')
+    await eventBus.emitEvent(eventName, payload, { persistent: true })
+  } catch (err) {
+    console.warn(`[booking] Failed to emit event ${eventName}`, err)
+  }
+}
+
 const createEventCommand: CommandHandler<EventCreatePayload, { eventId: string }> = {
   id: 'booking.events.create',
   async execute(input, ctx) {
     const em = (ctx.container.resolve('em') as EntityManager).fork()
-    const conflictChecker = new ConflictChecker(em)
 
-    return await em.transactional(async (tx) => {
+    const { event, attendees } = await em.transactional(async (tx) => {
       const service = await resolveService(tx, input.serviceId)
       enforceScope(ctx, service.tenantId, service.organizationId)
 
@@ -472,18 +465,11 @@ const createEventCommand: CommandHandler<EventCreatePayload, { eventId: string }
         input.attendees,
         input.members,
         input.resources,
-        { startsAt: input.startsAt, endsAt: input.endsAt },
+        input.startsAt,
+        input.endsAt,
       )
       void teamMembers
       void bookingResources
-
-      await conflictChecker.assertNoConflicts({
-        tenantId: service.tenantId,
-        organizationId: service.organizationId,
-        spans: input.spans ?? [{ startsAt: input.startsAt, endsAt: input.endsAt }],
-        subjectMembers: input.members.map((member) => member.memberId),
-        subjectResources: input.resources,
-      })
 
       const event = tx.create(BookingEvent, {
         tenantId: service.tenantId,
@@ -507,8 +493,22 @@ const createEventCommand: CommandHandler<EventCreatePayload, { eventId: string }
 
       await tx.flush()
 
-      return { eventId: event.id }
+      return { event, attendees: input.attendees }
     })
+    
+    // Emit events
+    await emitEvent(ctx, 'booking.event.created', {
+      id: event.id,
+      tenantId: event.tenantId,
+      organizationId: event.organizationId,
+      serviceId: event.serviceId,
+      startsAt: event.startsAt,
+      endsAt: event.endsAt,
+      status: event.status,
+      attendees: attendees.map(a => ({ email: a.email, firstName: a.firstName, lastName: a.lastName }))
+    })
+
+    return { eventId: event.id }
   },
 }
 
@@ -516,12 +516,12 @@ const updateEventCommand: CommandHandler<EventUpdatePayload, { eventId: string }
   id: 'booking.events.update',
   async execute(input, ctx) {
     const em = (ctx.container.resolve('em') as EntityManager).fork()
-    const conflictChecker = new ConflictChecker(em)
-    return await em.transactional(async (tx) => {
+    const { event, previousStatus } = await em.transactional(async (tx) => {
       const event = await tx.findOne(BookingEvent, { id: input.id, deletedAt: null })
       if (!event) {
         throw new CrudHttpError(404, { error: 'Booking event not found' })
       }
+      const previousStatus = event.status
 
       const serviceId = input.serviceId ?? event.serviceId
       const service = await resolveService(tx, serviceId)
@@ -558,25 +558,22 @@ const updateEventCommand: CommandHandler<EventUpdatePayload, { eventId: string }
         qty: entity.qty,
       }))
 
+      // Use startsAt/endsAt from input or existing event
+      const startsAt = input.startsAt ?? event.startsAt
+      const endsAt = input.endsAt ?? event.endsAt
+
       const { teamMembers, bookingResources } = await validateEventPayload(
         tx,
         service,
         attendees,
         members,
         resources,
+        startsAt,
+        endsAt,
+        event.id,
       )
       void teamMembers
       void bookingResources
-
-      const spanInputs = input.spans ?? [{ startsAt: input.startsAt ?? event.startsAt, endsAt: input.endsAt ?? event.endsAt }]
-      await conflictChecker.assertNoConflicts({
-        tenantId: service.tenantId,
-        organizationId: service.organizationId,
-        spans: spanInputs,
-        subjectMembers: members.map((member) => member.memberId),
-        subjectResources: resources,
-        ignoreEventId: event.id,
-      })
 
       buildEventEntity(event, { ...input, serviceId: service.id }, service)
 
@@ -597,8 +594,21 @@ const updateEventCommand: CommandHandler<EventUpdatePayload, { eventId: string }
 
       await tx.flush()
 
-      return { eventId: event.id }
+      return { event, previousStatus }
     })
+    
+    await emitEvent(ctx, 'booking.event.updated', {
+      id: event.id,
+      tenantId: event.tenantId,
+      organizationId: event.organizationId,
+      serviceId: event.serviceId,
+      startsAt: event.startsAt,
+      endsAt: event.endsAt,
+      status: event.status,
+      previousStatus
+    })
+
+    return { eventId: event.id }
   },
 }
 
@@ -615,6 +625,12 @@ const deleteEventCommand: CommandHandler<{ id: string }, { eventId: string }> = 
 
     event.deletedAt = new Date()
     await em.flush()
+    
+    await emitEvent(ctx, 'booking.event.deleted', {
+      id: event.id,
+      tenantId: event.tenantId,
+      organizationId: event.organizationId
+    })
 
     return { eventId: event.id }
   },
@@ -641,4 +657,3 @@ export function mapEventUpdateInput(
 ): EventUpdatePayload {
   return mapUpdateInput(event, attendees, members, resources)
 }
-
